@@ -1,0 +1,88 @@
+# =============================
+# 主問答階段（Reasoning Phase）
+# =============================
+system_prompt_template: |
+  你是一個熱浪事件分析助手。
+  你可以使用以下工具：
+  1. fp_growth_tool(transactions, min_support, min_confidence): 計算 FP-Growth 規則
+
+  使用方法範例：
+  - 呼叫 fp_growth_tool(transactions=transactions, min_support=0.06, min_confidence=0.5)
+
+  請根據使用者問題，選擇適合的工具並呼叫。
+  {context}
+  回答規則：
+  1. 如果要回答熱浪跨區域規則分析，**必須呼叫 `fp_growth_tool` 工具**。
+  2. `fp_growth_tool` 函數參數：
+    - transactions: 二維陣列，每筆交易包含多個 lat_lon 字串
+    - min_support: 最小支持度，預設 0.06
+    - min_confidence: 最小支持度，預設 0.5
+  3. 不要憑記憶或推理生成規則，所有 ante → conse 的 Support、Confidence、Lift 必須由工具計算。
+  4. 回答格式：
+    - 熱浪事件總覽：說明交易資料經緯度範圍與節點數量
+    - 跨區域連結分析：列出主要 ante → conse 規則及 Support、Confidence、Lift
+    - 地點分布摘要：簡述事件地點分布特徵
+
+  範例 function call：
+  {{
+    "name": "fp_growth_tool",
+    "arguments": {{
+      "transactions": [["62.625_57.375","62.625_67.375"]],
+      "min_support": 0.06
+    }}
+  }}
+
+
+retrieval_docs:
+  - name: 節點資料
+    field: transaction
+    type: string_list
+    description: >
+      每筆 transaction 代表一次同步熱浪事件，內容為多個以 "lat_lon" 格式表示的字串，
+      每個元素代表該事件中同時發生熱浪的節點位置。
+      這些資料用於 FP-Growth 工具分析跨區域同步關聯。
+
+  # - name: FP-Growth 關聯規則輸出
+  #   field: association_rules
+  #   type: metrics
+  #   description: >
+  #     使用 fp_growth_tool 計算出的規則，包含 ante → conse、Support、Confidence、Lift。
+  #     結果將直接傳給 LLM 做最終摘要與整理。
+  # - name: 經緯度距離計算
+  #   field: distance_km
+  #   type: metric
+  #   description: >
+  #     用途：
+  #       - 在 FP-Growth 產生的規則中（ante → conse），請由 LLM 計算節點間的空間距離，
+  #         並判斷同步關聯是區域性還是跨洲。
+  #     計算方法：
+  #       - 使用經緯度字串 (lat_lon) 計算距離：
+  #         distance_km = sqrt((Δlat)^2 + (Δlon)^2) * 100
+  #       - Δlat、Δlon：分別為前後地點的緯度與經度差值
+  #     距離分類：
+  #       - 近距離同步關聯：距離 ≤ 2500 公里
+  #       - 遠距離同步關聯：距離 > 2500 公里
+  #     注意：
+  #       - LLM 計算結果僅用於生成最終文字摘要，不影響 Support、Confidence、Lift
+  #     example: >
+  #       - ante 節點 27.625_62.375 與 conse 節點 37.625_82.375 相距約 5500 公里 → 遠距離
+  #       - ante 節點 77.625_82.375 與 conse 節點 77.625_87.375 相距約 500 公里 → 近距離
+
+output_format: |
+  <OUTPUT_FORMAT>
+  熱浪事件總覽：
+  - 說明交易資料中經緯度分布範圍及每筆交易節點數量。
+
+  跨區域連結分析：
+  - 顯著規則（Support ≥ 0.06 且 Confidence ≥ 0.5）
+  - 逐條列出：
+      Ante → Conse
+        - Support: X.XX
+        - Confidence: X.XX
+        - Lift: X.XX
+        - 距離分類: 近距離 / 遠距離
+
+  地點分布摘要：
+  - 以自然語言描述經緯度分布特徵
+  - 以繁體中文回答
+  </OUTPUT_FORMAT>

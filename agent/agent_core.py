@@ -1,0 +1,102 @@
+import json
+from config.settings import client, MODEL
+from tools.schema import TOOLS, TOOL_MAPPING
+
+def run_agent(system_prompt, user_question, transactions):
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_question}
+    ]
+
+    # 🔹 第一階段：LLM 決策階段（Agent）
+    # 第一次呼叫 LLM
+    response_1_raw = client.chat.completions.create(
+        model=MODEL,
+        messages=messages,
+        tools=TOOLS
+    )
+
+    if not response_1_raw or not hasattr(response_1_raw, "choices"):
+        print("⚠️ LLM 回傳 None 或格式不正確")
+        return
+
+    assistant_msg = response_1_raw.choices[0].message
+    assistant_dict = {
+        "role": "assistant",
+        "content": assistant_msg.content,
+        "tool_calls": getattr(assistant_msg, "tool_calls", [])
+    }
+    messages.append(assistant_dict)
+    tool_calls = assistant_dict["tool_calls"] or []
+
+    if not tool_calls:
+        print("LLM 沒有呼叫工具")
+        return
+
+    print(f"LLM 有呼叫 {len(tool_calls)} 個工具")
+
+    # 🔹 第二階段：工具執行階段（Agent Core）
+    # 執行工具
+    for idx, tool_call in enumerate(tool_calls, 1):
+        tool_name = tool_call.function.name
+        tool_args = {}
+        tool_content_summary = ""
+
+        try:
+            try:
+                tool_args = json.loads(tool_call.function.arguments)
+            except Exception:
+                import ast
+                tool_args = ast.literal_eval(tool_call.function.arguments)
+
+            if tool_name == "fp_growth_tool":
+                tool_args["transactions"] = transactions
+                tool_args["min_support"] = 0.06
+                tool_args["min_confidence"] = 0.5
+
+            tool_response = TOOL_MAPPING[tool_name](**tool_args)
+
+            if tool_name == "fp_growth_tool" and isinstance(tool_response, dict):
+                top_rules = sorted(tool_response.get("top_rules_sample", []), key=lambda x: x.get("confidence",0), reverse=True)[:20]
+                tool_content_summary = {
+                    "summary": tool_response,
+                    "top_rules": top_rules
+                }
+            else:
+                tool_content_summary = f"工具 {tool_name} 已完成。結果簡要：{str(tool_response)[:500]}..."
+
+        except Exception as e:
+            print(f"⚠️ 執行工具 {tool_name} 發生錯誤:", e)
+            tool_content_summary = f"工具 {tool_name} 執行失敗: {str(e)}"
+
+        messages.append({
+            "role": "tool",
+            "tool_call_id": str(tool_call.id),
+            "content": tool_content_summary
+        })
+
+    # 🔹 第三階段：LLM 回應階段（LLM）
+    # 第二次呼叫 LLM
+    safe_messages = []
+    for m in messages:
+        if not isinstance(m, dict):
+            m = m.model_dump() if hasattr(m, "model_dump") else m.__dict__
+        item = {"role": m.get("role","user"), "content": str(m.get("content",""))}
+        if m.get("role")=="assistant" and "tool_calls" in m and m["tool_calls"]:
+            item["tool_calls"] = m["tool_calls"]
+        if m.get("role")=="tool" and "tool_call_id" in m:
+            item["tool_call_id"] = m["tool_call_id"]
+        safe_messages.append(item)
+
+    response_2_raw = client.chat.completions.create(
+        model=MODEL,
+        messages=safe_messages
+    )
+
+    if not response_2_raw or not hasattr(response_2_raw, "choices"):
+        print("⚠️ 第二次 LLM 回傳 None 或格式不正確")
+        return
+
+    final_answer = response_2_raw.choices[0].message.content
+    print("\n=== LLM 最終回答 ===\n")
+    print(final_answer)
