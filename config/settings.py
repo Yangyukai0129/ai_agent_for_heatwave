@@ -1,6 +1,6 @@
 from openai import OpenAI
 
-OPENROUTER_API_KEY = "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"
+OPENROUTER_API_KEY = "xxx"
 MODEL = "mistralai/voxtral-small-24b-2507"
 
 DATA_DIR = "./data/post"
