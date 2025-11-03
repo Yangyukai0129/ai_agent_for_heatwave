@@ -57,10 +57,12 @@ def run_agent(system_prompt, user_question, transactions):
             tool_response = TOOL_MAPPING[tool_name](**tool_args)
 
             if tool_name == "fp_growth_tool" and isinstance(tool_response, dict):
-                top_rules = sorted(tool_response.get("top_rules_sample", []), key=lambda x: x.get("confidence",0), reverse=True)[:20]
                 tool_content_summary = {
-                    "summary": tool_response,
-                    "top_rules": top_rules
+                    "total_rules": tool_response["total_rules"],
+                    "near_summary": tool_response["near_rules_summary"],
+                    "far_summary": tool_response["far_rules_summary"],
+                    "distance_distribution": tool_response.get("distance_distribution"),
+                    "top_rules_sample": tool_response.get("top_rules_sample")
                 }
             else:
                 tool_content_summary = f"工具 {tool_name} 已完成。結果簡要：{str(tool_response)[:500]}..."
@@ -88,9 +90,37 @@ def run_agent(system_prompt, user_question, transactions):
             item["tool_call_id"] = m["tool_call_id"]
         safe_messages.append(item)
 
+    summary_prompt = f"""
+        以下是 FP-Growth 結果摘要：
+
+        總規則數: {tool_content_summary.get("total_rules", "N/A")}
+
+        近距離規則統計 (distance ≤ 2500 km):
+        {json.dumps(tool_content_summary.get("near_summary", {}), ensure_ascii=False, indent=2)}
+
+        遠距離規則統計 (distance > 2500 km):
+        {json.dumps(tool_content_summary.get("far_summary", {}), ensure_ascii=False, indent=2)}
+
+        距離分布統計:
+        {json.dumps(tool_content_summary.get("distance_distribution", {}), ensure_ascii=False, indent=2)}
+
+        Top {len(tool_content_summary.get("top_rules_sample", []))} 規則樣本:
+        {json.dumps(tool_content_summary.get("top_rules_sample", []), ensure_ascii=False, indent=2)}
+
+        請根據摘要生成報告，包含：
+
+        總規則數與平均強度 (support / confidence / lift)
+
+        近距離與遠距離規則的特性差異，並說明距離統計 (min / max / mean)
+
+        可能代表的熱浪事件傳播特徵，並討論近距離 vs 遠距離規則的意義
+        """
     response_2_raw = client.chat.completions.create(
         model=MODEL,
-        messages=safe_messages
+        messages=[
+            {"role": "system", "content": "你是氣候資料分析助理，請根據摘要生成報告"},
+            {"role": "user", "content": summary_prompt}
+        ]
     )
 
     if not response_2_raw or not hasattr(response_2_raw, "choices"):
